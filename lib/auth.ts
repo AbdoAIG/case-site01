@@ -11,7 +11,7 @@ export const CSRF_HEADER_NAME = "x-csrf-token";
 const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8 ساعات
 
 const DEFAULT_FALLBACK_HASH =
-  "scrypt:a1b2c3d4e5f60718293a4b5c6d7e8f90:4dc7bb8b9cc4777f7a0d602cd61010bcba21fcda7ed5821fb4a398b6605d30e8eaa2cce101ea0689bd9d25d9490b37e62c454b847cdff0aeac97b6f18e253e28";
+  "sha256:dev2026a1b2c3d4e5:4c615f4e8e4a8c3c2a8c3c9f5b7e3e4d8c9a1b2c3d4e5f6a7b8c9d0e1f2a3b4c";
 
 function safeEqualBuffers(a: Buffer, b: Buffer): boolean {
   if (a.length !== b.length) return false;
@@ -34,6 +34,22 @@ export async function verifyAdminPassword(plainPassword: string): Promise<boolea
     storedHash = DEFAULT_FALLBACK_HASH;
   }
 
+  // 1. صيغة sha256:salt:hash (تعمل في أقل من 0.2 ملي ثانية لتناسب حد الـ 10ms في Cloudflare Free)
+  if (storedHash.startsWith("sha256:")) {
+    const parts = storedHash.split(":");
+    if (parts.length !== 3) return false;
+    const [, salt, expectedHex] = parts;
+    const computedHex = crypto
+      .createHash("sha256")
+      .update(`${salt}:${plainPassword}`)
+      .digest("hex");
+    return safeEqualBuffers(
+      Buffer.from(computedHex, "hex"),
+      Buffer.from(expectedHex, "hex")
+    );
+  }
+
+  // 2. دعم scrypt للتشغيل المحلي أو الخطط المدفوعة
   if (storedHash.startsWith("scrypt:") || storedHash.startsWith("scrypt$")) {
     const separator = storedHash.startsWith("scrypt:") ? ":" : "$";
     const parts = storedHash.split(separator);
@@ -44,6 +60,7 @@ export async function verifyAdminPassword(plainPassword: string): Promise<boolea
     return safeEqualBuffers(derivedKey, keyBuffer);
   }
 
+  // 3. دعم bcrypt
   if (storedHash.startsWith("bcrypt64:")) {
     const decodedHash = Buffer.from(
       storedHash.slice("bcrypt64:".length),
@@ -64,8 +81,12 @@ export async function verifyAdminPassword(plainPassword: string): Promise<boolea
 }
 
 export async function hashPassword(plainPassword: string): Promise<string> {
-  const bcryptHash = await bcrypt.hash(plainPassword, 12);
-  return `bcrypt64:${Buffer.from(bcryptHash, "utf-8").toString("base64")}`;
+  const salt = crypto.randomBytes(8).toString("hex");
+  const hex = crypto
+    .createHash("sha256")
+    .update(`${salt}:${plainPassword}`)
+    .digest("hex");
+  return `sha256:${salt}:${hex}`;
 }
 
 export interface SessionPayload {
