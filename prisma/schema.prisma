@@ -1,0 +1,71 @@
+// هيكل قاعدة البيانات عبر Prisma
+// للتبديل إلى PostgreSQL في الإنتاج، غيّر provider إلى "postgresql" في بلوك datasource
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String   @map("password_hash")
+  role         String   @default("ADMIN")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  uploads      Upload[]
+
+  @@map("users")
+}
+
+model Upload {
+  id            String   @id @default(cuid())
+  originalName  String   @map("original_name")
+  storedName    String   @unique @map("stored_name")
+  mimeType      String   @map("mime_type")
+  sizeBytes     Int      @map("size_bytes")
+  storageDriver String   @default("local") @map("storage_driver")
+  storagePath   String   @map("storage_path")
+  sha256Hash    String   @map("sha256_hash")
+  uploadedById  String?  @map("uploaded_by_id")
+  uploadedBy    User?    @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+  media         Media?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("uploads")
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  title     String
+  caption   String?
+  kind      String   // "image" | "video"
+  url       String
+  mimeType  String   @map("mime_type")
+  sizeBytes Int      @map("size_bytes")
+  uploadId  String   @unique @map("upload_id")
+  upload    Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@map("media")
+}
+
+// جدول بيانات القضية ومعلومات التواصل (يدعم رقمين للتواصل والواتساب)
+model CaseInfo {
+  id            String   @id @default("singleton")
+  title         String
+  description   String
+  contactName   String?  @default("") @map("contact_name")
+  contactPhone  String?  @default("") @map("contact_phone")
+  contactPhone2 String?  @default("") @map("contact_phone_2")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("case_info")
+}
