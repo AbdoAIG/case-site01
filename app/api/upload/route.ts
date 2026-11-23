@@ -9,6 +9,7 @@ import {
   sanitizeDisplayFilename,
   verifyCsrfToken,
 } from "@/lib/auth";
+import { getEnvVar } from "@/lib/env";
 import { addFallbackMedia, saveMediaBuffer } from "@/lib/storage";
 import {
   addMediaToGoogleSheets,
@@ -34,7 +35,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!verifyCsrfToken(req)) {
+    if (!(await verifyCsrfToken(req))) {
       return NextResponse.json(
         { error: "رمز الحماية (CSRF Token) غير صالح أو منتهي الصلاحية." },
         { status: 403 }
@@ -66,7 +67,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const maxUploadMb = Math.max(1, Number(process.env.MAX_UPLOAD_MB || "25"));
+    const maxUploadRaw = await getEnvVar("MAX_UPLOAD_MB");
+    const maxUploadMb = Math.max(1, Number(maxUploadRaw || "25"));
     const maxBytes = maxUploadMb * 1024 * 1024;
 
     if (fileEntry.size <= 0) {
@@ -120,8 +122,7 @@ export async function POST(req: NextRequest) {
     const itemId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
 
-    // في Cloudflare Workers، يُرفع الملف إلى Google Drive ويُسجل في Google Sheets مباشرة
-    if (isGoogleSheetsEnabled()) {
+    if (await isGoogleSheetsEnabled()) {
       const base64Data =
         buffer.length <= 12 * 1024 * 1024 ? buffer.toString("base64") : undefined;
 
