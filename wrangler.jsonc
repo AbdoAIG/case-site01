@@ -11,7 +11,7 @@
   "vars": {
     "NODE_ENV": "production",
     "GOOGLE_SCRIPT_URL": "https://script.google.com/macros/s/AKfycbzo_jLkPkjAeXl36-gyMJS7HJbJCkb5sxUdhTcKIT9JuF7mprrcQBqxkEAyI-u2q9WDbg/exec",
-    "ADMIN_PASSWORD_HASH": "scrypt:9f4b2e8a1c7d60354e2b9a8c7d1f3e50:ed5c42154dfbef9013af6da62a20f53425fc005c8d1546be51c276f136ac7b21d43ee1cd85e4e604cf57899d3f38c033d5cc227eb02c3e9b2bcaa537d37c8bcf"
+    "ADMIN_PASSWORD_HASH": "sha256:cf2026a1b2c3d4e5:cc684be354beff65d4d51bf2b9295b5a3ed83a5f6942da94d06533146c0229d5"
   },
   "observability": {
     "enabled": true
