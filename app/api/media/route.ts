@@ -13,6 +13,7 @@ import {
   verifyAdminPassword,
   verifyCsrfToken,
 } from "@/lib/auth";
+import { getEnvVar } from "@/lib/env";
 import {
   addFallbackMedia,
   deleteMediaFile,
@@ -52,7 +53,7 @@ export async function getMergedCaseAndMediaState() {
     localMap.set(item.id, item);
   }
 
-  if (isGoogleSheetsEnabled()) {
+  if (await isGoogleSheetsEnabled()) {
     const sheetData = await fetchFromGoogleSheets();
     if (sheetData) {
       const mergedMedia: MediaRecordData[] = [];
@@ -123,7 +124,6 @@ export async function GET(req: NextRequest) {
   const remoteUrlParam = searchParams.get("remoteUrl");
   const kindParam = searchParams.get("kind") === "video" ? "video" : "image";
 
-  // 1. بروكسي Google Drive
   if (driveIdParam && /^[a-zA-Z0-9_-]+$/.test(driveIdParam)) {
     const candidateUrls =
       kindParam === "video"
@@ -181,7 +181,6 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 2. بروكسي الروابط الخارجية
   if (
     remoteUrlParam &&
     (remoteUrlParam.startsWith("http://") || remoteUrlParam.startsWith("https://"))
@@ -211,7 +210,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "تعذر تحميل الرابط الخارجي." }, { status: 404 });
   }
 
-  // 3. بث الملفات المحلية (للتشغيل المحلي)
   if (fileParam) {
     let mimeType = "application/octet-stream";
     if (fileParam.endsWith(".jpg") || fileParam.endsWith(".jpeg")) mimeType = "image/jpeg";
@@ -239,17 +237,20 @@ export async function GET(req: NextRequest) {
 
   const session = await getServerSession();
   const existingCsrf = req.cookies.get(CSRF_COOKIE_NAME)?.value;
-  const csrfToken = existingCsrf || generateCsrfToken();
+  const csrfToken = existingCsrf || (await generateCsrfToken());
 
   const { caseInfo, media, googleSheetsConnected } =
     await getMergedCaseAndMediaState();
+
+  const maxUploadRaw = await getEnvVar("MAX_UPLOAD_MB");
+  const maxUploadMb = Math.max(1, Number(maxUploadRaw || "25"));
 
   const res = NextResponse.json({
     caseInfo,
     media,
     authenticated: Boolean(session),
     csrfToken,
-    maxUploadMb: Math.max(1, Number(process.env.MAX_UPLOAD_MB || "25")),
+    maxUploadMb,
     googleSheetsConnected,
   });
 
@@ -259,7 +260,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    if (!verifyCsrfToken(req)) {
+    if (!(await verifyCsrfToken(req))) {
       return NextResponse.json(
         { error: "رمز الحماية (CSRF Token) غير صالح أو منتهي. يرجى تحديث الصفحة (F5) والمحاولة مجدداً." },
         { status: 403 }
@@ -293,9 +294,9 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const adminUsername = process.env.ADMIN_USERNAME || "admin";
-      const sessionToken = createSessionToken(adminUsername);
-      const newCsrfToken = generateCsrfToken();
+      const adminUsername = (await getEnvVar("ADMIN_USERNAME")) || "admin";
+      const sessionToken = await createSessionToken(adminUsername);
+      const newCsrfToken = await generateCsrfToken();
 
       const res = NextResponse.json({
         message: "تم تسجيل الدخول بنجاح.",
@@ -309,7 +310,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "logout") {
-      const newCsrfToken = generateCsrfToken();
+      const newCsrfToken = await generateCsrfToken();
       const res = NextResponse.json({
         message: "تم تسجيل الخروج بنجاح.",
         authenticated: false,
@@ -357,7 +358,7 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (isGoogleSheetsEnabled()) {
+      if (await isGoogleSheetsEnabled()) {
         await updateCaseInGoogleSheets({
           title,
           description,
@@ -407,7 +408,7 @@ export async function POST(req: NextRequest) {
       const mimeType = kind === "video" ? "video/mp4" : "image/jpeg";
       const createdAt = new Date().toISOString();
 
-      if (isGoogleSheetsEnabled()) {
+      if (await isGoogleSheetsEnabled()) {
         await addMediaToGoogleSheets({
           id,
           title: safeTitle,
@@ -466,7 +467,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "غير مصرح." }, { status: 401 });
   }
 
-  if (!verifyCsrfToken(req)) {
+  if (!(await verifyCsrfToken(req))) {
     return NextResponse.json(
       { error: "رمز الحماية (CSRF Token) غير صالح." },
       { status: 403 }
@@ -483,7 +484,7 @@ async function handleDeleteMediaById(id: string) {
     return NextResponse.json({ error: "معرّف الوسيط مطلوب." }, { status: 400 });
   }
 
-  if (isGoogleSheetsEnabled()) {
+  if (await isGoogleSheetsEnabled()) {
     await deleteMediaFromGoogleSheets(id);
   }
 
