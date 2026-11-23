@@ -14,7 +14,7 @@
   "dependencies": {
     "@opennextjs/cloudflare": "^1.20.12",
     "bcryptjs": "^2.4.3",
-    "next": "^15.5.9",
+    "next": "^15.5.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
