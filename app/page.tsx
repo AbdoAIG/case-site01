@@ -1,8 +1,7 @@
 import { getMergedCaseAndMediaState } from "@/app/api/media/route";
 import PublicGallery, { PublicMediaItem } from "@/components/PublicGallery";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
+export const revalidate = 15;
 
 function formatWhatsAppNumber(phone: string): string {
   let digits = phone.replace(/\D/g, "");
