@@ -46,73 +46,29 @@ const GOOGLE_USER_AGENT =
   "Mozilla/5.0 (compatible; Google-Agent; +https://developers.google.com/crawling/docs/crawlers-fetchers/google-agent)";
 
 export async function getMergedCaseAndMediaState() {
-  const fallback = await readFallbackState(DEFAULT_TITLE, DEFAULT_DESCRIPTION);
-  const localMediaList = fallback.media;
-  const localMap = new Map<string, MediaRecordData>();
-  for (const item of localMediaList) {
-    localMap.set(item.id, item);
-  }
-
   if (await isGoogleSheetsEnabled()) {
     const sheetData = await fetchFromGoogleSheets();
     if (sheetData) {
-      const mergedMedia: MediaRecordData[] = [];
-      const seenIds = new Set<string>();
-
-      for (const sheetItem of sheetData.media) {
-        seenIds.add(sheetItem.id);
-        const localMatch = localMap.get(sheetItem.id);
-        if (localMatch && localMatch.url.startsWith("/api/media?file=")) {
-          mergedMedia.push({
-            ...sheetItem,
-            url: localMatch.url,
-          });
-        } else {
-          mergedMedia.push(sheetItem);
-        }
-      }
-
-      for (const localItem of localMediaList) {
-        if (!seenIds.has(localItem.id)) {
-          mergedMedia.push(localItem);
-        }
-      }
-
       return {
         caseInfo: {
           id: "singleton",
-          title:
-            sheetData.caseInfo.title ||
-            fallback.caseInfo.title ||
-            DEFAULT_TITLE,
-          description:
-            sheetData.caseInfo.description ||
-            fallback.caseInfo.description ||
-            DEFAULT_DESCRIPTION,
-          contactName:
-            sheetData.caseInfo.contactName ||
-            fallback.caseInfo.contactName ||
-            "",
-          contactPhone:
-            sheetData.caseInfo.contactPhone ||
-            fallback.caseInfo.contactPhone ||
-            "",
-          contactPhone2:
-            sheetData.caseInfo.contactPhone2 ||
-            fallback.caseInfo.contactPhone2 ||
-            "",
-          updatedAt:
-            sheetData.caseInfo.updatedAt || fallback.caseInfo.updatedAt,
+          title: sheetData.caseInfo.title || DEFAULT_TITLE,
+          description: sheetData.caseInfo.description || DEFAULT_DESCRIPTION,
+          contactName: sheetData.caseInfo.contactName || "",
+          contactPhone: sheetData.caseInfo.contactPhone || "",
+          contactPhone2: sheetData.caseInfo.contactPhone2 || "",
+          updatedAt: sheetData.caseInfo.updatedAt,
         },
-        media: mergedMedia,
+        media: sheetData.media,
         googleSheetsConnected: true,
       };
     }
   }
 
+  const fallback = await readFallbackState(DEFAULT_TITLE, DEFAULT_DESCRIPTION);
   return {
     caseInfo: fallback.caseInfo,
-    media: localMediaList,
+    media: fallback.media,
     googleSheetsConnected: false,
   };
 }
@@ -123,7 +79,9 @@ export async function GET(req: NextRequest) {
   const driveIdParam = searchParams.get("driveId");
   const remoteUrlParam = searchParams.get("remoteUrl");
   const kindParam = searchParams.get("kind") === "video" ? "video" : "image";
+  const publicOnly = searchParams.get("public") === "1";
 
+  // 1. بث صور Google Drive عبر Streaming بدون تحميل كامل في الذاكرة
   if (driveIdParam && /^[a-zA-Z0-9_-]+$/.test(driveIdParam)) {
     const candidateUrls =
       kindParam === "video"
@@ -144,19 +102,16 @@ export async function GET(req: NextRequest) {
           redirect: "follow",
         });
         const contentType = remoteRes.headers.get("content-type") || "";
-        if (remoteRes.ok && !contentType.includes("text/html")) {
-          const arrayBuf = await remoteRes.arrayBuffer();
-          if (arrayBuf.byteLength > 100) {
-            return new NextResponse(Buffer.from(arrayBuf), {
-              status: 200,
-              headers: {
-                "Content-Type":
-                  contentType || (kindParam === "video" ? "video/mp4" : "image/jpeg"),
-                "Cache-Control": "public, max-age=86400",
-                "X-Content-Type-Options": "nosniff",
-              },
-            });
-          }
+        if (remoteRes.ok && remoteRes.body && !contentType.includes("text/html")) {
+          return new NextResponse(remoteRes.body, {
+            status: 200,
+            headers: {
+              "Content-Type":
+                contentType || (kindParam === "video" ? "video/mp4" : "image/jpeg"),
+              "Cache-Control": "public, max-age=86400, s-maxage=86400",
+              "X-Content-Type-Options": "nosniff",
+            },
+          });
         }
       } catch {
         // تجربة الرابط التالي
@@ -169,7 +124,7 @@ export async function GET(req: NextRequest) {
         status: 200,
         headers: {
           "Content-Type": scriptFile.mimeType,
-          "Cache-Control": "public, max-age=86400",
+          "Cache-Control": "public, max-age=86400, s-maxage=86400",
           "X-Content-Type-Options": "nosniff",
         },
       });
@@ -181,6 +136,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // 2. بث الروابط الخارجية عبر Streaming
   if (
     remoteUrlParam &&
     (remoteUrlParam.startsWith("http://") || remoteUrlParam.startsWith("https://"))
@@ -190,16 +146,15 @@ export async function GET(req: NextRequest) {
         headers: { "User-Agent": GOOGLE_USER_AGENT },
         redirect: "follow",
       });
-      if (remoteRes.ok) {
+      if (remoteRes.ok && remoteRes.body) {
         const contentType =
           remoteRes.headers.get("content-type") ||
           (kindParam === "video" ? "video/mp4" : "image/jpeg");
-        const arrayBuf = await remoteRes.arrayBuffer();
-        return new NextResponse(Buffer.from(arrayBuf), {
+        return new NextResponse(remoteRes.body, {
           status: 200,
           headers: {
             "Content-Type": contentType,
-            "Cache-Control": "public, max-age=3600",
+            "Cache-Control": "public, max-age=3600, s-maxage=3600",
             "X-Content-Type-Options": "nosniff",
           },
         });
@@ -210,6 +165,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "تعذر تحميل الرابط الخارجي." }, { status: 404 });
   }
 
+  // 3. بث الملفات المحلية
   if (fileParam) {
     let mimeType = "application/octet-stream";
     if (fileParam.endsWith(".jpg") || fileParam.endsWith(".jpeg")) mimeType = "image/jpeg";
@@ -233,6 +189,20 @@ export async function GET(req: NextRequest) {
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     });
+  }
+
+  // مسار سريع جداً للصفحة العامة (?public=1) مع كاش CDN لمنع استهلاك معالج Worker
+  if (publicOnly) {
+    const { caseInfo, media, googleSheetsConnected } =
+      await getMergedCaseAndMediaState();
+    return NextResponse.json(
+      { caseInfo, media, googleSheetsConnected },
+      {
+        headers: {
+          "Cache-Control": "public, max-age=10, s-maxage=15, stale-while-revalidate=60",
+        },
+      }
+    );
   }
 
   const session = await getServerSession();
