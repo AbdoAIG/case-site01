@@ -1,24 +1,26 @@
 import { CaseInfoData, MediaRecordData } from "@/lib/storage";
+import { getEnvVar } from "@/lib/env";
 
 const GOOGLE_USER_AGENT =
   "Mozilla/5.0 (compatible; Google-Agent; +https://developers.google.com/crawling/docs/crawlers-fetchers/google-agent)";
 
-export function isGoogleSheetsEnabled(): boolean {
-  const url = (process.env.GOOGLE_SCRIPT_URL || "").trim();
-  return url.startsWith("https://script.google.com/");
+async function getScriptConfig() {
+  const [url, secret] = await Promise.all([
+    getEnvVar("GOOGLE_SCRIPT_URL"),
+    getEnvVar("GOOGLE_SCRIPT_SECRET"),
+  ]);
+  return { url, secret };
 }
 
-function getScriptConfig() {
-  return {
-    url: (process.env.GOOGLE_SCRIPT_URL || "").trim(),
-    secret: (process.env.GOOGLE_SCRIPT_SECRET || "").trim(),
-  };
+export async function isGoogleSheetsEnabled(): Promise<boolean> {
+  const url = await getEnvVar("GOOGLE_SCRIPT_URL");
+  return url.startsWith("https://script.google.com/");
 }
 
 async function postToGoogleScript(
   bodyObj: Record<string, unknown>
 ): Promise<Record<string, unknown> | null> {
-  const { url } = getScriptConfig();
+  const { url } = await getScriptConfig();
   if (!url) return null;
 
   const res = await fetch(url, {
@@ -65,9 +67,6 @@ async function postToGoogleScript(
   }
 }
 
-/**
- * استخراج معرّف Google Drive فقط إذا كان الرابط ينتمي فعلاً إلى Google Drive
- */
 export function extractGoogleDriveId(rawUrl: string): string | null {
   const url = (rawUrl || "").trim();
   if (!url) return null;
@@ -88,9 +87,6 @@ export function extractGoogleDriveId(rawUrl: string): string | null {
   return null;
 }
 
-/**
- * استخراج معرّف فيديو يوتيوب (لدعم فيديوهات YouTube العادية و Shorts من الإنترنت مباشرة)
- */
 export function extractYouTubeVideoId(rawUrl: string): string | null {
   const url = (rawUrl || "").trim();
   if (!url) return null;
@@ -109,12 +105,6 @@ export function extractYouTubeVideoId(rawUrl: string): string | null {
   return null;
 }
 
-/**
- * معالجة ذكية لروابط الصور والفيديوهات:
- * 1. إذا كان المستخدم قد كتب في الشيت معادلة =IMAGE("https://...") نستخرج الرابط منها تلقائياً.
- * 2. إذا كان الرابط من الإنترنت المباشر (أي موقع خارجي)، نتركه كما هو ليحمّله المتصفح مباشرة بدون وسيط!
- * 3. إذا كان الرابط من Google Drive فقط، نمرره عبر بروكسي Google Drive.
- */
 export function normalizeMediaUrl(
   rawInput: string,
   kind: "image" | "video",
@@ -122,13 +112,11 @@ export function normalizeMediaUrl(
 ): string {
   let url = (rawInput || "").trim();
 
-  // إزالة صيغة =IMAGE("...") إذا كتبها المستخدم كمعادلة في الشيت
   const imageFormulaMatch = url.match(/^=\s*IMAGE\s*\(\s*["']([^"']+)["']/i);
   if (imageFormulaMatch?.[1]) {
     url = imageFormulaMatch[1].trim();
   }
 
-  // إزالة أي علامات تنصيص محيطة بالرابط
   url = url.replace(/^["']+|["']+$/g, "").trim();
 
   if (!url && driveFileId?.trim()) {
@@ -139,25 +127,22 @@ export function normalizeMediaUrl(
     return url;
   }
 
-  // فحص ما إذا كان رابط Google Drive فقط
   const extractedDriveId = driveFileId?.trim() || extractGoogleDriveId(url);
   if (extractedDriveId) {
     return `/api/media?driveId=${encodeURIComponent(extractedDriveId)}&kind=${kind}`;
   }
 
-  // أي رابط صورة أو فيديو من الإنترنت (https://...) يُترك مباشرة ليفتحه المتصفح فوراً
   return url;
 }
 
-// الإبقاء على الاسم القديم للتوافق مع بقية الملفات
 export const normalizeGoogleDriveUrl = normalizeMediaUrl;
 
 export async function fetchDriveFileViaAppsScript(fileId: string): Promise<{
   buffer: Buffer;
   mimeType: string;
 } | null> {
-  if (!isGoogleSheetsEnabled()) return null;
-  const { url, secret } = getScriptConfig();
+  const { url, secret } = await getScriptConfig();
+  if (!url.startsWith("https://script.google.com/")) return null;
 
   try {
     const targetUrl = new URL(url);
@@ -192,8 +177,8 @@ export async function fetchFromGoogleSheets(): Promise<{
   caseInfo: CaseInfoData;
   media: MediaRecordData[];
 } | null> {
-  if (!isGoogleSheetsEnabled()) return null;
-  const { url, secret } = getScriptConfig();
+  const { url, secret } = await getScriptConfig();
+  if (!url.startsWith("https://script.google.com/")) return null;
 
   try {
     const targetUrl = new URL(url);
@@ -279,8 +264,8 @@ export async function updateCaseInGoogleSheets(payload: {
   contactPhone: string;
   contactPhone2: string;
 }): Promise<CaseInfoData | null> {
-  if (!isGoogleSheetsEnabled()) return null;
-  const { secret } = getScriptConfig();
+  const { url, secret } = await getScriptConfig();
+  if (!url.startsWith("https://script.google.com/")) return null;
 
   try {
     const data = await postToGoogleScript({
@@ -308,8 +293,8 @@ export async function addMediaToGoogleSheets(payload: {
   base64Data?: string;
   createdAt: string;
 }): Promise<MediaRecordData | null> {
-  if (!isGoogleSheetsEnabled()) return null;
-  const { secret } = getScriptConfig();
+  const { url, secret } = await getScriptConfig();
+  if (!url.startsWith("https://script.google.com/")) return null;
 
   try {
     const data = await postToGoogleScript({
@@ -343,8 +328,8 @@ export async function addMediaToGoogleSheets(payload: {
 }
 
 export async function deleteMediaFromGoogleSheets(id: string): Promise<boolean> {
-  if (!isGoogleSheetsEnabled()) return false;
-  const { secret } = getScriptConfig();
+  const { url, secret } = await getScriptConfig();
+  if (!url.startsWith("https://script.google.com/")) return false;
 
   try {
     const data = await postToGoogleScript({

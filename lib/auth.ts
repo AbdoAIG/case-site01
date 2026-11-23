@@ -2,6 +2,7 @@ import crypto from "crypto";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
+import { getEnvVar } from "@/lib/env";
 
 export const SESSION_COOKIE_NAME = "case_admin_session";
 export const CSRF_COOKIE_NAME = "case_csrf_token";
@@ -17,8 +18,8 @@ function safeEqualBuffers(a: Buffer, b: Buffer): boolean {
   return crypto.timingSafeEqual(new Uint8Array(a), new Uint8Array(b));
 }
 
-function getSecretKey(): string {
-  const secret = process.env.SESSION_SECRET;
+async function getSecretKey(): Promise<string> {
+  const secret = await getEnvVar("SESSION_SECRET");
   if (!secret || secret.length < 32) {
     return "dev-fallback-secret-key-must-be-changed-in-production-32chars";
   }
@@ -28,7 +29,7 @@ function getSecretKey(): string {
 export async function verifyAdminPassword(plainPassword: string): Promise<boolean> {
   if (!plainPassword) return false;
 
-  let storedHash = (process.env.ADMIN_PASSWORD_HASH || "").trim();
+  let storedHash = await getEnvVar("ADMIN_PASSWORD_HASH");
   if (!storedHash || storedHash.length < 25) {
     storedHash = DEFAULT_FALLBACK_HASH;
   }
@@ -75,14 +76,14 @@ export interface SessionPayload {
   jti: string;
 }
 
-function signData(data: string): string {
+function signDataWithKey(data: string, secretKey: string): string {
   return crypto
-    .createHmac("sha256", getSecretKey())
+    .createHmac("sha256", secretKey)
     .update(data)
     .digest("base64url");
 }
 
-export function createSessionToken(username = "admin"): string {
+export async function createSessionToken(username = "admin"): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: SessionPayload = {
     sub: username,
@@ -94,18 +95,20 @@ export function createSessionToken(username = "admin"): string {
   const encodedPayload = Buffer.from(JSON.stringify(payload)).toString(
     "base64url"
   );
-  const signature = signData(encodedPayload);
+  const secretKey = await getSecretKey();
+  const signature = signDataWithKey(encodedPayload, secretKey);
   return `${encodedPayload}.${signature}`;
 }
 
-export function verifySessionToken(
+export async function verifySessionToken(
   token?: string | null
-): SessionPayload | null {
+): Promise<SessionPayload | null> {
   if (!token || !token.includes(".")) return null;
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
 
-  const expectedSignature = signData(encodedPayload);
+  const secretKey = await getSecretKey();
+  const expectedSignature = signDataWithKey(encodedPayload, secretKey);
   const sigBuf = Buffer.from(signature);
   const expectedBuf = Buffer.from(expectedSignature);
   if (!safeEqualBuffers(sigBuf, expectedBuf)) {
@@ -126,7 +129,6 @@ export function verifySessionToken(
   }
 }
 
-// في Next.js 15 أصبحت دالة cookies() غير متزامنة (async)
 export async function getServerSession(): Promise<SessionPayload | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
@@ -159,15 +161,16 @@ export function clearSessionCookie(res: NextResponse): void {
   });
 }
 
-export function generateCsrfToken(): string {
+export async function generateCsrfToken(): Promise<string> {
   const nonce = crypto.randomBytes(24).toString("hex");
   const timestamp = Date.now().toString();
   const raw = `${nonce}.${timestamp}`;
-  const sig = signData(raw);
+  const secretKey = await getSecretKey();
+  const sig = signDataWithKey(raw, secretKey);
   return `${raw}.${sig}`;
 }
 
-export function verifyCsrfToken(req: NextRequest): boolean {
+export async function verifyCsrfToken(req: NextRequest): Promise<boolean> {
   const cookieToken = req.cookies.get(CSRF_COOKIE_NAME)?.value;
   const headerToken = req.headers.get(CSRF_HEADER_NAME);
 
@@ -182,7 +185,8 @@ export function verifyCsrfToken(req: NextRequest): boolean {
   const parts = headerToken.split(".");
   if (parts.length !== 3) return false;
   const [nonce, timestamp, sig] = parts;
-  const expectedSig = signData(`${nonce}.${timestamp}`);
+  const secretKey = await getSecretKey();
+  const expectedSig = signDataWithKey(`${nonce}.${timestamp}`, secretKey);
 
   const sigBuf = Buffer.from(sig);
   const expectedBuf = Buffer.from(expectedSig);
